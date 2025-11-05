@@ -1,25 +1,29 @@
 import logging
 import os
 from aiogram import Bot, Dispatcher, types
-from aiogram.filters import CommandStart
 from aiogram.types import Message, KeyboardButton, ReplyKeyboardMarkup
+from aiogram.dispatcher.filters import CommandStart
 from aiogram.utils import executor
 from dotenv import load_dotenv
 
+# --------------------------
+# Load environment variables
+# --------------------------
 load_dotenv()
-
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 ADMIN_ID = int(os.getenv("ADMIN_ID"))
 
+# --------------------------
+# Setup logging and bot
+# --------------------------
 logging.basicConfig(level=logging.INFO)
-
 bot = Bot(token=BOT_TOKEN)
-dp = Dispatcher()
+dp = Dispatcher(bot)
 
 # --------------------------
 # Handle /start command
 # --------------------------
-@dp.message(CommandStart())
+@dp.message_handler(CommandStart())
 async def start(message: Message):
     keyboard = ReplyKeyboardMarkup(
         keyboard=[
@@ -37,13 +41,13 @@ async def start(message: Message):
 # --------------------------
 # Handle contact (phone number)
 # --------------------------
-@dp.message(lambda msg: msg.contact is not None)
+@dp.message_handler(content_types=types.ContentType.CONTACT)
 async def handle_contact(message: Message):
     contact = message.contact
     phone_number = contact.phone_number
     user_id = message.chat.id
 
-    # Notify admin that user shared contact
+    # Notify admin
     await bot.send_message(
         ADMIN_ID,
         f"📞 User shared phone number:\n\n"
@@ -52,25 +56,23 @@ async def handle_contact(message: Message):
         f"🆔 ID: `{user_id}`",
         parse_mode="Markdown"
     )
+
     await message.answer("✅ Thanks! Your phone number has been shared with support.")
 
 # --------------------------
 # Forward user messages to admin
 # --------------------------
-@dp.message()
+@dp.message_handler(lambda message: message.chat.id != ADMIN_ID)
 async def forward_to_admin(message: Message):
-    if message.chat.id == ADMIN_ID:
-        return  # prevent loops if admin messages bot
-
     user = message.from_user
     username = f"@{user.username}" if user.username else "❌ No username"
     name = user.full_name or "Unknown"
     user_id = user.id
 
-    # Forward the user’s message
+    # Forward message
     await bot.forward_message(ADMIN_ID, user_id, message.message_id)
 
-    # Send info about the sender
+    # Send info about sender
     info_text = (
         f"🧾 Message from user:\n\n"
         f"👤 Name: {name}\n"
@@ -82,12 +84,11 @@ async def forward_to_admin(message: Message):
 # --------------------------
 # Admin reply to user
 # --------------------------
-@dp.message(lambda message: message.chat.id == ADMIN_ID and message.reply_to_message)
+@dp.message_handler(lambda message: message.chat.id == ADMIN_ID and message.reply_to_message)
 async def reply_from_admin(message: Message):
     text = message.reply_to_message.text or ""
     if "ID:" in text:
         try:
-            # Extract user ID from text
             user_id = int(text.split("ID:")[1].split("\n")[0].strip(' `'))
             await bot.send_message(user_id, f"💬 Support Reply:\n\n{message.text}")
             await message.answer("✅ Sent to user.")
@@ -97,7 +98,8 @@ async def reply_from_admin(message: Message):
         await message.answer("⚠️ Can't find user ID to reply.")
 
 # --------------------------
-# Run bot
+# Run the bot
 # --------------------------
 if __name__ == "__main__":
+    logging.info("🚀 Bot started successfully!")
     executor.start_polling(dp, skip_updates=True)
