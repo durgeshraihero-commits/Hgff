@@ -1,6 +1,6 @@
 import logging
 import os
-os.environ["PORT"] = "8080"
+import asyncio
 from aiogram import Bot, Dispatcher, types
 from aiogram.types import Message, KeyboardButton, ReplyKeyboardMarkup
 from aiogram.dispatcher.filters import CommandStart
@@ -20,6 +20,18 @@ ADMIN_ID = int(os.getenv("ADMIN_ID"))
 logging.basicConfig(level=logging.INFO)
 bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher(bot)
+
+# --------------------------
+# Notify admin when bot starts
+# --------------------------
+async def on_startup(dispatcher):
+    # Clear any old webhook or polling session
+    await bot.delete_webhook(drop_pending_updates=True)
+    try:
+        await bot.send_message(ADMIN_ID, "✅ Bot is Live on Render and ready to serve!")
+        logging.info("✅ Startup notification sent to admin.")
+    except Exception as e:
+        logging.error(f"Failed to send startup message: {e}")
 
 # --------------------------
 # Handle /start command
@@ -102,5 +114,5 @@ async def reply_from_admin(message: Message):
 # Run the bot
 # --------------------------
 if __name__ == "__main__":
-    logging.info("🚀 Bot started successfully!")
-    executor.start_polling(dp, skip_updates=True)
+    logging.info("🚀 Starting bot...")
+    executor.start_polling(dp, skip_updates=True, on_startup=on_startup)
