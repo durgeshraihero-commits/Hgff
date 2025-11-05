@@ -1,5 +1,6 @@
 import logging
 import os
+os.environ["PORT"] = "8080"
 from aiogram import Bot, Dispatcher, types
 from aiogram.types import Message, KeyboardButton, ReplyKeyboardMarkup
 from aiogram.dispatcher.filters import CommandStart
