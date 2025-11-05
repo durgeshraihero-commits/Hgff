@@ -1,13 +1,11 @@
 import os
 import logging
-from telegram import Update
-from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes
-from flask import Flask
+import telebot
+from flask import Flask, request
 from threading import Thread
-import asyncio
+from dotenv import load_dotenv
 
 # Load environment variables
-from dotenv import load_dotenv
 load_dotenv('bot.env')
 
 # Bot configuration
@@ -21,23 +19,24 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-# Flask app for web server
+# Initialize bot and flask app
+bot = telebot.TeleBot(BOT_TOKEN)
 app = Flask(__name__)
 
 @app.route('/')
 def home():
-    return "Bot is running!", 200
+    return "🤖 Bot is running and healthy!", 200
 
 @app.route('/health')
 def health():
-    return "OK", 200
+    return "✅ OK", 200
 
-@app.route('/webhook', methods=['POST'])
-def webhook():
-    return "OK", 200
+# Store user data for admin replies
+user_sessions = {}
 
 # Start command handler
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+@bot.message_handler(commands=['start'])
+def send_welcome(message):
     welcome_message = """
 This is my supportbot 
 Send any number you want to get details .
@@ -48,122 +47,166 @@ II) 🔥🔥🔥all that are mentioned above + family members name (rs 150)
 III) upi to info 20rs 
 IV) number to Facebook 20rs
 V) telegram userid to number 20rs
-VI) 🔥🔥customised apis for anyone's gallery access (rs200)
+VI) 🔥🔥customised apk for anyone's gallery hack (rs200)
 VII)🔥🔥 trace anyone with just a link (rs 20)
 VIII) detailed vehicle information (rs 20)
  
 This bot is not automated it is manually operated by me so I will reply you when I will come online so be patient...
     """
-    await update.message.reply_text(welcome_message)
+    
+    bot.reply_to(message, welcome_message)
     
     # Notify admin about new user
-    user = update.effective_user
-    user_info = f"New user started the bot:\nID: {user.id}\nName: {user.full_name}\nUsername: @{user.username}"
-    await context.bot.send_message(chat_id=ADMIN_CHAT_ID, text=user_info)
-
-# Forward all messages to admin
-async def forward_to_admin(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user = update.effective_user
-    message = update.message
-    
-    # Create forward message with user info
-    user_info = f"Message from:\nID: {user.id}\nName: {user.full_name}\nUsername: @{user.username}"
-    
-    if message.text:
-        full_message = f"{user_info}\n\nMessage: {message.text}"
-        await context.bot.send_message(chat_id=ADMIN_CHAT_ID, text=full_message)
-        # Auto-reply to user
-        await message.reply_text("✅ Message received! I will reply to you when I come online. Please be patient...")
-    
-    elif message.photo:
-        await context.bot.send_message(chat_id=ADMIN_CHAT_ID, text=user_info)
-        await context.bot.send_photo(chat_id=ADMIN_CHAT_ID, photo=message.photo[-1].file_id, caption=message.caption)
-        # Auto-reply to user
-        await message.reply_text("✅ Photo received! I will check it and reply when I come online.")
-    
-    elif message.document:
-        await context.bot.send_message(chat_id=ADMIN_CHAT_ID, text=user_info)
-        await context.bot.send_document(chat_id=ADMIN_CHAT_ID, document=message.document.file_id, caption=message.caption)
-        # Auto-reply to user
-        await message.reply_text("✅ Document received! I will check it and reply when I come online.")
-
-# Admin reply functionality
-async def handle_admin_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if str(update.effective_user.id) != ADMIN_CHAT_ID:
-        return
-    
-    # Check if this is a reply to a forwarded message
-    if update.message.reply_to_message:
-        replied_message = update.message.reply_to_message
-        original_text = replied_message.text
-        
-        # Extract user ID from the forwarded message
-        if original_text and "ID:" in original_text:
-            lines = original_text.split('\n')
-            user_id = None
-            for line in lines:
-                if line.startswith('ID:'):
-                    user_id = line.split(': ')[1]
-                    break
-            
-            if user_id:
-                try:
-                    await context.bot.send_message(
-                        chat_id=int(user_id),
-                        text=update.message.text
-                    )
-                    await update.message.reply_text("✅ Reply sent successfully!")
-                except Exception as e:
-                    await update.message.reply_text(f"❌ Failed to send reply: {str(e)}")
-    else:
-        # If admin sends a command, handle it
-        if update.message.text and update.message.text.startswith('/'):
-            if update.message.text == '/start':
-                await update.message.reply_text("You are admin. All user messages are forwarded to you. Reply to any message to respond to users.")
-
-# Error handler
-async def error_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    logger.error(f"Exception while handling an update: {context.error}")
-
-# Setup bot application
-def setup_bot():
-    # Check if environment variables are set
-    if not BOT_TOKEN or not ADMIN_CHAT_ID:
-        logger.error("❌ BOT_TOKEN or ADMIN_CHAT_ID not set in environment variables")
-        return None
+    user = message.from_user
+    user_info = f"🆕 New user started the bot:\nID: {user.id}\nName: {user.first_name}\nUsername: @{user.username}"
     
     try:
-        application = Application.builder().token(BOT_TOKEN).build()
-        
-        # Add handlers
-        application.add_handler(CommandHandler("start", start))
-        application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, forward_to_admin))
-        application.add_handler(MessageHandler(filters.PHOTO | filters.DOCUMENT, forward_to_admin))
-        application.add_handler(MessageHandler(filters.ALL, handle_admin_message))
-        application.add_error_handler(error_handler)
-        
-        logger.info("✅ Bot setup completed successfully")
-        return application
+        bot.send_message(ADMIN_CHAT_ID, user_info)
+        logger.info(f"New user: {user.id} - {user.first_name}")
     except Exception as e:
-        logger.error(f"❌ Failed to setup bot: {e}")
-        return None
+        logger.error(f"Failed to notify admin: {e}")
 
-# Run bot using polling
-def run_bot():
-    logger.info("🔄 Starting bot...")
-    application = setup_bot()
+# Handle text messages
+@bot.message_handler(content_types=['text'])
+def handle_text_messages(message):
+    user = message.from_user
+    user_info = f"💬 Message from:\nID: {user.id}\nName: {user.first_name}\nUsername: @{user.username}"
     
-    if application:
-        try:
-            # Use polling instead of webhook for simplicity
-            application.run_polling(
-                allowed_updates=Update.ALL_TYPES,
-                drop_pending_updates=True
-            )
-        except Exception as e:
-            logger.error(f"❌ Bot polling error: {e}")
-    else:
-        logger.error("❌ Cannot start bot due to setup failure")
+    # Forward message to admin
+    try:
+        full_message = f"{user_info}\n\n📩 Message: {message.text}"
+        sent_msg = bot.send_message(ADMIN_CHAT_ID, full_message)
+        
+        # Store message info for reply functionality
+        user_sessions[sent_msg.message_id] = {
+            'user_id': user.id,
+            'user_name': user.first_name
+        }
+        
+        # Auto-reply to user
+        bot.reply_to(message, "✅ Message received! I will reply to you when I come online. Please be patient...")
+        
+        logger.info(f"Forwarded message from user {user.id}")
+        
+    except Exception as e:
+        logger.error(f"Error forwarding message: {e}")
+        bot.reply_to(message, "❌ Failed to send message. Please try again later.")
+
+# Handle photos
+@bot.message_handler(content_types=['photo'])
+def handle_photos(message):
+    user = message.from_user
+    user_info = f"🖼️ Photo from:\nID: {user.id}\nName: {user.first_name}\nUsername: @{user.username}"
+    
+    try:
+        # Send user info to admin
+        sent_msg = bot.send_message(ADMIN_CHAT_ID, user_info)
+        
+        # Forward photo to admin
+        bot.send_photo(
+            ADMIN_CHAT_ID, 
+            message.photo[-1].file_id, 
+            caption=message.caption if message.caption else "Photo from user"
+        )
+        
+        # Store message info
+        user_sessions[sent_msg.message_id] = {
+            'user_id': user.id,
+            'user_name': user.first_name
+        }
+        
+        # Auto-reply to user
+        bot.reply_to(message, "✅ Photo received! I will check it and reply when I come online.")
+        
+        logger.info(f"Forwarded photo from user {user.id}")
+        
+    except Exception as e:
+        logger.error(f"Error forwarding photo: {e}")
+        bot.reply_to(message, "❌ Failed to send photo. Please try again later.")
+
+# Handle documents
+@bot.message_handler(content_types=['document'])
+def handle_documents(message):
+    user = message.from_user
+    user_info = f"📎 Document from:\nID: {user.id}\nName: {user.first_name}\nUsername: @{user.username}"
+    
+    try:
+        # Send user info to admin
+        sent_msg = bot.send_message(ADMIN_CHAT_ID, user_info)
+        
+        # Forward document to admin
+        bot.send_document(
+            ADMIN_CHAT_ID,
+            message.document.file_id,
+            caption=message.caption if message.caption else "Document from user"
+        )
+        
+        # Store message info
+        user_sessions[sent_msg.message_id] = {
+            'user_id': user.id,
+            'user_name': user.first_name
+        }
+        
+        # Auto-reply to user
+        bot.reply_to(message, "✅ Document received! I will check it and reply when I come online.")
+        
+        logger.info(f"Forwarded document from user {user.id}")
+        
+    except Exception as e:
+        logger.error(f"Error forwarding document: {e}")
+        bot.reply_to(message, "❌ Failed to send document. Please try again later.")
+
+# Admin commands
+@bot.message_handler(commands=['admin'])
+def admin_commands(message):
+    if str(message.from_user.id) != ADMIN_CHAT_ID:
+        bot.reply_to(message, "❌ Access denied.")
+        return
+    
+    admin_help = """
+🤖 Admin Commands:
+/users - Show recent users
+/stats - Show bot statistics
+/broadcast <message> - Broadcast to all users
+"""
+    bot.reply_to(message, admin_help)
+
+# Function to handle admin replies manually
+def handle_admin_reply(admin_message):
+    """
+    This function should be called when admin wants to reply to a user.
+    You'll implement this based on how you want to handle replies.
+    """
+    pass
+
+# Run bot polling
+def run_bot():
+    logger.info("🚀 Starting Telegram bot...")
+    
+    if not BOT_TOKEN:
+        logger.error("❌ BOT_TOKEN not found in environment variables")
+        return
+    
+    if not ADMIN_CHAT_ID:
+        logger.error("❌ ADMIN_CHAT_ID not found in environment variables")
+        return
+    
+    try:
+        logger.info("✅ Bot configured successfully")
+        logger.info("🔄 Starting polling...")
+        bot.infinity_polling(timeout=60, long_polling_timeout=60)
+    except Exception as e:
+        logger.error(f"❌ Bot polling error: {e}")
+        # Restart after delay
+        import time
+        time.sleep(10)
+        run_bot()
+
+# Start bot in a thread
+def start_bot():
+    bot_thread = Thread(target=run_bot, daemon=True)
+    bot_thread.start()
+    logger.info("✅ Bot thread started")
 
 # Main function
 def main():
@@ -171,21 +214,28 @@ def main():
     if not BOT_TOKEN:
         logger.error("❌ BOT_TOKEN environment variable is not set")
         return
+    
     if not ADMIN_CHAT_ID:
         logger.error("❌ ADMIN_CHAT_ID environment variable is not set")
         return
     
-    logger.info("🚀 Starting application...")
+    logger.info("🎯 Starting application...")
+    logger.info(f"🤖 Bot Token: {BOT_TOKEN[:10]}...")
+    logger.info(f"👤 Admin ID: {ADMIN_CHAT_ID}")
     
-    # Start bot in a separate thread
-    bot_thread = Thread(target=run_bot, daemon=True)
-    bot_thread.start()
-    logger.info("✅ Bot thread started")
+    # Start the bot
+    start_bot()
     
     # Start Flask app
     port = int(os.environ.get('PORT', 5000))
     logger.info(f"🌐 Starting Flask app on port {port}")
-    app.run(host='0.0.0.0', port=port, debug=False, use_reloader=False)
+    
+    app.run(
+        host='0.0.0.0',
+        port=port,
+        debug=False,
+        use_reloader=False
+    )
 
 if __name__ == '__main__':
     main()
