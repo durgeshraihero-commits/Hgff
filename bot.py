@@ -1,10 +1,10 @@
 import os
 import logging
 from telegram import Update
-from telegram.ext import Updater, CommandHandler, MessageHandler, Filters, CallbackContext
+from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes
 from flask import Flask
 from threading import Thread
-import time
+import asyncio
 
 # Load environment variables
 from dotenv import load_dotenv
@@ -32,8 +32,12 @@ def home():
 def health():
     return "OK", 200
 
+@app.route('/webhook', methods=['POST'])
+def webhook():
+    return "OK", 200
+
 # Start command handler
-def start(update: Update, context: CallbackContext):
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     welcome_message = """
 This is my supportbot 
 Send any number you want to get details .
@@ -44,21 +48,21 @@ II) 🔥🔥🔥all that are mentioned above + family members name (rs 150)
 III) upi to info 20rs 
 IV) number to Facebook 20rs
 V) telegram userid to number 20rs
-VI) 🔥🔥customised apk for anyone's gallery hack (rs200)
+VI) 🔥🔥customised apis for anyone's gallery access (rs200)
 VII)🔥🔥 trace anyone with just a link (rs 20)
 VIII) detailed vehicle information (rs 20)
  
 This bot is not automated it is manually operated by me so I will reply you when I will come online so be patient...
     """
-    update.message.reply_text(welcome_message)
+    await update.message.reply_text(welcome_message)
     
     # Notify admin about new user
     user = update.effective_user
     user_info = f"New user started the bot:\nID: {user.id}\nName: {user.full_name}\nUsername: @{user.username}"
-    context.bot.send_message(chat_id=ADMIN_CHAT_ID, text=user_info)
+    await context.bot.send_message(chat_id=ADMIN_CHAT_ID, text=user_info)
 
 # Forward all messages to admin
-def forward_to_admin(update: Update, context: CallbackContext):
+async def forward_to_admin(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
     message = update.message
     
@@ -67,21 +71,24 @@ def forward_to_admin(update: Update, context: CallbackContext):
     
     if message.text:
         full_message = f"{user_info}\n\nMessage: {message.text}"
-        context.bot.send_message(chat_id=ADMIN_CHAT_ID, text=full_message)
+        await context.bot.send_message(chat_id=ADMIN_CHAT_ID, text=full_message)
+        # Auto-reply to user
+        await message.reply_text("✅ Message received! I will reply to you when I come online. Please be patient...")
     
     elif message.photo:
-        context.bot.send_message(chat_id=ADMIN_CHAT_ID, text=user_info)
-        context.bot.send_photo(chat_id=ADMIN_CHAT_ID, photo=message.photo[-1].file_id, caption=message.caption)
+        await context.bot.send_message(chat_id=ADMIN_CHAT_ID, text=user_info)
+        await context.bot.send_photo(chat_id=ADMIN_CHAT_ID, photo=message.photo[-1].file_id, caption=message.caption)
+        # Auto-reply to user
+        await message.reply_text("✅ Photo received! I will check it and reply when I come online.")
     
     elif message.document:
-        context.bot.send_message(chat_id=ADMIN_CHAT_ID, text=user_info)
-        context.bot.send_document(chat_id=ADMIN_CHAT_ID, document=message.document.file_id, caption=message.caption)
-    
-    # Auto-reply to user
-    update.message.reply_text("✅ Message received! I will reply to you when I come online. Please be patient...")
+        await context.bot.send_message(chat_id=ADMIN_CHAT_ID, text=user_info)
+        await context.bot.send_document(chat_id=ADMIN_CHAT_ID, document=message.document.file_id, caption=message.caption)
+        # Auto-reply to user
+        await message.reply_text("✅ Document received! I will check it and reply when I come online.")
 
 # Admin reply functionality
-def admin_reply(update: Update, context: CallbackContext):
+async def handle_admin_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if str(update.effective_user.id) != ADMIN_CHAT_ID:
         return
     
@@ -101,59 +108,83 @@ def admin_reply(update: Update, context: CallbackContext):
             
             if user_id:
                 try:
-                    context.bot.send_message(
-                        chat_id=user_id,
+                    await context.bot.send_message(
+                        chat_id=int(user_id),
                         text=update.message.text
                     )
-                    update.message.reply_text("✅ Reply sent successfully!")
+                    await update.message.reply_text("✅ Reply sent successfully!")
                 except Exception as e:
-                    update.message.reply_text(f"❌ Failed to send reply: {str(e)}")
+                    await update.message.reply_text(f"❌ Failed to send reply: {str(e)}")
+    else:
+        # If admin sends a command, handle it
+        if update.message.text and update.message.text.startswith('/'):
+            if update.message.text == '/start':
+                await update.message.reply_text("You are admin. All user messages are forwarded to you. Reply to any message to respond to users.")
 
 # Error handler
-def error_handler(update: Update, context: CallbackContext):
+async def error_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     logger.error(f"Exception while handling an update: {context.error}")
 
-# Setup bot
+# Setup bot application
 def setup_bot():
-    updater = Updater(token=BOT_TOKEN, use_context=True)
-    dispatcher = updater.dispatcher
+    # Check if environment variables are set
+    if not BOT_TOKEN or not ADMIN_CHAT_ID:
+        logger.error("❌ BOT_TOKEN or ADMIN_CHAT_ID not set in environment variables")
+        return None
     
-    # Add handlers
-    dispatcher.add_handler(CommandHandler("start", start))
-    dispatcher.add_handler(MessageHandler(Filters.text & ~Filters.command, forward_to_admin))
-    dispatcher.add_handler(MessageHandler(Filters.photo | Filters.document, forward_to_admin))
-    dispatcher.add_handler(MessageHandler(Filters.all, admin_reply))
-    dispatcher.add_error_handler(error_handler)
-    
-    return updater
+    try:
+        application = Application.builder().token(BOT_TOKEN).build()
+        
+        # Add handlers
+        application.add_handler(CommandHandler("start", start))
+        application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, forward_to_admin))
+        application.add_handler(MessageHandler(filters.PHOTO | filters.DOCUMENT, forward_to_admin))
+        application.add_handler(MessageHandler(filters.ALL, handle_admin_message))
+        application.add_error_handler(error_handler)
+        
+        logger.info("✅ Bot setup completed successfully")
+        return application
+    except Exception as e:
+        logger.error(f"❌ Failed to setup bot: {e}")
+        return None
 
-# Run bot in background
+# Run bot using polling
 def run_bot():
-    updater = setup_bot()
+    logger.info("🔄 Starting bot...")
+    application = setup_bot()
     
-    # Start polling
-    updater.start_polling()
-    logger.info("Bot started polling...")
-    
-    # Run the bot until interrupted
-    updater.idle()
+    if application:
+        try:
+            # Use polling instead of webhook for simplicity
+            application.run_polling(
+                allowed_updates=Update.ALL_TYPES,
+                drop_pending_updates=True
+            )
+        except Exception as e:
+            logger.error(f"❌ Bot polling error: {e}")
+    else:
+        logger.error("❌ Cannot start bot due to setup failure")
 
 # Main function
 def main():
-    # Check if environment variables are set
-    if not BOT_TOKEN or not ADMIN_CHAT_ID:
-        logger.error("BOT_TOKEN or ADMIN_CHAT_ID not set in environment variables")
+    # Validate environment variables
+    if not BOT_TOKEN:
+        logger.error("❌ BOT_TOKEN environment variable is not set")
+        return
+    if not ADMIN_CHAT_ID:
+        logger.error("❌ ADMIN_CHAT_ID environment variable is not set")
         return
     
+    logger.info("🚀 Starting application...")
+    
     # Start bot in a separate thread
-    bot_thread = Thread(target=run_bot)
-    bot_thread.daemon = True
+    bot_thread = Thread(target=run_bot, daemon=True)
     bot_thread.start()
-    logger.info("Bot thread started")
+    logger.info("✅ Bot thread started")
     
     # Start Flask app
     port = int(os.environ.get('PORT', 5000))
-    logger.info(f"Starting Flask app on port {port}")
+    logger.info(f"🌐 Starting Flask app on port {port}")
     app.run(host='0.0.0.0', port=port, debug=False, use_reloader=False)
 
 if __name__ == '__main__':
