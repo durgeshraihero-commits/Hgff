@@ -1,118 +1,160 @@
-import logging
 import os
+import logging
+from telegram import Update
+from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes
+from flask import Flask
+from threading import Thread
 import asyncio
-from aiogram import Bot, Dispatcher, types
-from aiogram.types import Message, KeyboardButton, ReplyKeyboardMarkup
-from aiogram.dispatcher.filters import CommandStart
-from aiogram.utils import executor
-from dotenv import load_dotenv
 
-# --------------------------
 # Load environment variables
-# --------------------------
-load_dotenv()
-BOT_TOKEN = os.getenv("BOT_TOKEN")
-ADMIN_ID = int(os.getenv("ADMIN_ID"))
+from dotenv import load_dotenv
+load_dotenv('bot.env')
 
-# --------------------------
-# Setup logging and bot
-# --------------------------
-logging.basicConfig(level=logging.INFO)
-bot = Bot(token=BOT_TOKEN)
-dp = Dispatcher(bot)
+# Bot configuration
+BOT_TOKEN = os.getenv('BOT_TOKEN')
+ADMIN_CHAT_ID = os.getenv('ADMIN_CHAT_ID')
 
-# --------------------------
-# Notify admin when bot starts
-# --------------------------
-async def on_startup(dispatcher):
-    # Clear any old webhook or polling session
-    await bot.delete_webhook(drop_pending_updates=True)
-    try:
-        await bot.send_message(ADMIN_ID, "✅ Bot is Live on Render and ready to serve!")
-        logging.info("✅ Startup notification sent to admin.")
-    except Exception as e:
-        logging.error(f"Failed to send startup message: {e}")
+# Setup logging
+logging.basicConfig(
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    level=logging.INFO
+)
+logger = logging.getLogger(__name__)
 
-# --------------------------
-# Handle /start command
-# --------------------------
-@dp.message_handler(CommandStart())
-async def start(message: Message):
-    keyboard = ReplyKeyboardMarkup(
-        keyboard=[
-            [KeyboardButton(text="📱 Share Phone Number", request_contact=True)]
-        ],
-        resize_keyboard=True,
-        one_time_keyboard=True
-    )
-    await message.answer(
-        "👋 Welcome to the Support Bot!\n"
-        "Please describe your issue or share your phone number below 👇",
-        reply_markup=keyboard
-    )
+# Flask app for web server (required by Render)
+app = Flask(__name__)
 
-# --------------------------
-# Handle contact (phone number)
-# --------------------------
-@dp.message_handler(content_types=types.ContentType.CONTACT)
-async def handle_contact(message: Message):
-    contact = message.contact
-    phone_number = contact.phone_number
-    user_id = message.chat.id
+@app.route('/')
+def home():
+    return "Bot is running!", 200
 
-    # Notify admin
-    await bot.send_message(
-        ADMIN_ID,
-        f"📞 User shared phone number:\n\n"
-        f"👤 Name: {message.from_user.full_name}\n"
-        f"📱 Phone: {phone_number}\n"
-        f"🆔 ID: `{user_id}`",
-        parse_mode="Markdown"
-    )
+@app.route('/health')
+def health():
+    return "OK", 200
 
-    await message.answer("✅ Thanks! Your phone number has been shared with support.")
+# Start command handler
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    welcome_message = """
+This is my supportbot 
+Send any number you want to get details .
+Two services are available :-
 
-# --------------------------
-# Forward user messages to admin
-# --------------------------
-@dp.message_handler(lambda message: message.chat.id != ADMIN_ID)
-async def forward_to_admin(message: Message):
-    user = message.from_user
-    username = f"@{user.username}" if user.username else "❌ No username"
-    name = user.full_name or "Unknown"
-    user_id = user.id
+I) name,father's name,address aadhar number alternate numbers (rs 100)
+II) 🔥🔥🔥all that are mentioned above + family members name (rs 150)
+III) upi to info 20rs 
+IV) number to Facebook 20rs
+V) telegram userid to number 20rs
+VI) 🔥🔥customised apk for anyone's gallery hack (rs200)
+VII)🔥🔥 trace anyone with just a link (rs 20)
+VIII) detailed vehicle information (rs 20)
+ 
+This bot is not automated it is manually operated by me so I will reply you when I will come online so be patient...
+    """
+    await update.message.reply_text(welcome_message)
+    
+    # Notify admin about new user
+    user = update.effective_user
+    user_info = f"New user started the bot:\nID: {user.id}\nName: {user.full_name}\nUsername: @{user.username}"
+    await context.bot.send_message(chat_id=ADMIN_CHAT_ID, text=user_info)
 
-    # Forward message
-    await bot.forward_message(ADMIN_ID, user_id, message.message_id)
+# Forward all messages to admin
+async def forward_to_admin(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user = update.effective_user
+    message = update.message
+    
+    # Create forward message with user info
+    user_info = f"Message from:\nID: {user.id}\nName: {user.full_name}\nUsername: @{user.username}"
+    
+    if message.text:
+        full_message = f"{user_info}\n\nMessage: {message.text}"
+        await context.bot.send_message(chat_id=ADMIN_CHAT_ID, text=full_message)
+    
+    elif message.photo:
+        await context.bot.send_message(chat_id=ADMIN_CHAT_ID, text=user_info)
+        await context.bot.send_photo(chat_id=ADMIN_CHAT_ID, photo=message.photo[-1].file_id, caption=message.caption)
+    
+    elif message.document:
+        await context.bot.send_message(chat_id=ADMIN_CHAT_ID, text=user_info)
+        await context.bot.send_document(chat_id=ADMIN_CHAT_ID, document=message.document.file_id, caption=message.caption)
+    
+    # Auto-reply to user
+    await message.reply_text("✅ Message received! I will reply to you when I come online. Please be patient...")
 
-    # Send info about sender
-    info_text = (
-        f"🧾 Message from user:\n\n"
-        f"👤 Name: {name}\n"
-        f"🆔 ID: `{user_id}`\n"
-        f"🔗 Username: {username}"
-    )
-    await bot.send_message(ADMIN_ID, info_text, parse_mode="Markdown")
+# Admin reply functionality
+async def admin_reply(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if str(update.effective_user.id) != ADMIN_CHAT_ID:
+        return
+    
+    # Check if this is a reply to a forwarded message
+    if update.message.reply_to_message:
+        replied_message = update.message.reply_to_message
+        original_text = replied_message.text
+        
+        # Extract user ID from the forwarded message
+        if "ID:" in original_text:
+            lines = original_text.split('\n')
+            user_id = None
+            for line in lines:
+                if line.startswith('ID:'):
+                    user_id = line.split(': ')[1]
+                    break
+            
+            if user_id:
+                try:
+                    await context.bot.send_message(
+                        chat_id=user_id,
+                        text=update.message.text
+                    )
+                    await update.message.reply_text("✅ Reply sent successfully!")
+                except Exception as e:
+                    await update.message.reply_text(f"❌ Failed to send reply: {str(e)}")
 
-# --------------------------
-# Admin reply to user
-# --------------------------
-@dp.message_handler(lambda message: message.chat.id == ADMIN_ID and message.reply_to_message)
-async def reply_from_admin(message: Message):
-    text = message.reply_to_message.text or ""
-    if "ID:" in text:
-        try:
-            user_id = int(text.split("ID:")[1].split("\n")[0].strip(' `'))
-            await bot.send_message(user_id, f"💬 Support Reply:\n\n{message.text}")
-            await message.answer("✅ Sent to user.")
-        except Exception as e:
-            await message.answer(f"⚠️ Failed to send: {e}")
+# Error handler
+async def error_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    logger.error(f"Exception while handling an update: {context.error}")
+
+# Setup bot application
+def setup_bot():
+    application = Application.builder().token(BOT_TOKEN).build()
+    
+    # Add handlers
+    application.add_handler(CommandHandler("start", start))
+    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, forward_to_admin))
+    application.add_handler(MessageHandler(filters.PHOTO | filters.DOCUMENT, forward_to_admin))
+    application.add_handler(MessageHandler(filters.ALL, admin_reply))
+    application.add_error_handler(error_handler)
+    
+    return application
+
+# Run bot in a separate thread
+def run_bot():
+    application = setup_bot()
+    
+    # Use webhook for production
+    port = int(os.environ.get('PORT', 5000))
+    webhook_url = os.environ.get('WEBHOOK_URL', '')
+    
+    if webhook_url:
+        application.run_webhook(
+            listen="0.0.0.0",
+            port=port,
+            url_path=BOT_TOKEN,
+            webhook_url=f"{webhook_url}/{BOT_TOKEN}"
+        )
     else:
-        await message.answer("⚠️ Can't find user ID to reply.")
+        # Use polling for development
+        application.run_polling()
 
-# --------------------------
-# Run the bot
-# --------------------------
-if __name__ == "__main__":
-    logging.info("🚀 Starting bot...")
-    executor.start_polling(dp, skip_updates=True, on_startup=on_startup)
+# Main function
+def main():
+    # Start bot in a separate thread
+    bot_thread = Thread(target=run_bot)
+    bot_thread.daemon = True
+    bot_thread.start()
+    
+    # Start Flask app
+    port = int(os.environ.get('PORT', 5000))
+    app.run(host='0.0.0.0', port=port, debug=False)
+
+if __name__ == '__main__':
+    main()
