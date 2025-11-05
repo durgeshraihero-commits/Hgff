@@ -1,4 +1,4 @@
 aiogram==3.4.1
-python-dotenv
+python-3.11.9
 motor
 pymongo
