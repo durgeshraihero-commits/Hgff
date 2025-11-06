@@ -23,7 +23,7 @@ logger = logging.getLogger(__name__)
 bot = telebot.TeleBot(BOT_TOKEN)
 app = Flask(__name__)
 
-# Store user data for replies (in production, use a database)
+# Store user data for replies
 user_messages = {}
 
 @app.route('/')
@@ -58,30 +58,34 @@ This bot is not automated it is manually operated by me so I will reply you when
     
     # Notify admin about new user
     user = message.from_user
-    user_info = f"🆕 New user started the bot:\nID: `{user.id}`\nName: {user.first_name}\nUsername: @{user.username}"
+    user_info = f"🆕 New user started the bot:\nID: {user.id}\nName: {user.first_name}\nUsername: @{user.username}"
     
     try:
-        bot.send_message(ADMIN_CHAT_ID, user_info, parse_mode='Markdown')
-        logger.info(f"New user: {user.id} - {user.first_name}")
+        bot.send_message(ADMIN_CHAT_ID, user_info)
+        logger.info(f"✅ Notified admin about new user: {user.id}")
     except Exception as e:
-        logger.error(f"Failed to notify admin: {e}")
+        logger.error(f"❌ Failed to notify admin: {e}")
 
-# Handle all user messages and forward to admin
+# Handle all user messages
 @bot.message_handler(func=lambda message: True, content_types=['text', 'photo', 'document'])
 def handle_all_messages(message):
+    # Ignore commands
+    if message.text and message.text.startswith('/'):
+        return
+        
     user = message.from_user
-    
-    # Create a unique ID for this message
     message_id = message.message_id
     
-    # Store user info with message ID
+    # Store user info
     user_messages[message_id] = {
         'user_id': user.id,
         'user_name': user.first_name,
         'username': user.username
     }
     
-    # Forward message to admin based on content type
+    logger.info(f"📨 Processing message #{message_id} from user {user.id}")
+    
+    # Forward based on content type
     if message.text:
         forward_text_message(message, message_id)
     elif message.photo:
@@ -91,135 +95,145 @@ def handle_all_messages(message):
 
 def forward_text_message(message, message_id):
     user = message.from_user
-    user_info = f"💬 Message #`{message_id}`\nFrom: {user.first_name} (@{user.username})\nUser ID: `{user.id}`"
+    user_info = f"💬 Message #{message_id}\nFrom: {user.first_name}\nUsername: @{user.username}\nUser ID: {user.id}"
     
     try:
-        # Send message to admin with reply instructions
-        admin_message = f"{user_info}\n\n📩 {message.text}\n\n💡 *Reply to this user by typing:*\n`/reply {message_id} Your message here`"
-        bot.send_message(ADMIN_CHAT_ID, admin_message, parse_mode='Markdown')
+        # Send to admin
+        admin_message = f"{user_info}\n\n📩 Message:\n{message.text}\n\n💡 To reply, use:\n/reply {message_id} your_message"
+        sent = bot.send_message(ADMIN_CHAT_ID, admin_message)
+        logger.info(f"✅ Text forwarded to admin. Admin message ID: {sent.message_id}")
         
         # Auto-reply to user
         bot.reply_to(message, "✅ Message received! I will reply to you when I come online. Please be patient...")
         
-        logger.info(f"Forwarded text message #{message_id} from user {user.id}")
-        
     except Exception as e:
-        logger.error(f"Error forwarding message: {e}")
-        bot.reply_to(message, "❌ Failed to send message. Please try again later.")
+        logger.error(f"❌ Error forwarding text: {e}")
+        try:
+            bot.reply_to(message, "❌ Failed to send message. Please try again later.")
+        except:
+            pass
 
 def forward_photo_message(message, message_id):
     user = message.from_user
-    user_info = f"🖼️ Photo #`{message_id}`\nFrom: {user.first_name} (@{user.username})\nUser ID: `{user.id}`"
+    user_info = f"🖼️ Photo #{message_id}\nFrom: {user.first_name}\nUsername: @{user.username}\nUser ID: {user.id}"
     
     try:
-        # Send to admin with reply instructions
         caption = message.caption if message.caption else "No caption"
-        admin_message = f"{user_info}\n\n📸 {caption}\n\n💡 *Reply to this user by typing:*\n`/reply {message_id} Your message here`"
+        admin_message = f"{user_info}\n\n📸 Caption: {caption}\n\n💡 To reply, use:\n/reply {message_id} your_message"
         
-        bot.send_message(ADMIN_CHAT_ID, admin_message, parse_mode='Markdown')
+        bot.send_message(ADMIN_CHAT_ID, admin_message)
         bot.send_photo(ADMIN_CHAT_ID, message.photo[-1].file_id)
+        logger.info(f"✅ Photo forwarded to admin")
         
-        # Auto-reply to user
-        bot.reply_to(message, "✅ Photo received! I will check it and reply when I come online.")
-        
-        logger.info(f"Forwarded photo #{message_id} from user {user.id}")
+        bot.reply_to(message, "✅ Photo received! I will check it and reply soon.")
         
     except Exception as e:
-        logger.error(f"Error forwarding photo: {e}")
-        bot.reply_to(message, "❌ Failed to send photo. Please try again later.")
+        logger.error(f"❌ Error forwarding photo: {e}")
 
 def forward_document_message(message, message_id):
     user = message.from_user
-    user_info = f"📎 Document #`{message_id}`\nFrom: {user.first_name} (@{user.username})\nUser ID: `{user.id}`"
+    user_info = f"📎 Document #{message_id}\nFrom: {user.first_name}\nUsername: @{user.username}\nUser ID: {user.id}"
     
     try:
-        # Send to admin with reply instructions
         caption = message.caption if message.caption else "No caption"
-        admin_message = f"{user_info}\n\n📄 {caption}\n\n💡 *Reply to this user by typing:*\n`/reply {message_id} Your message here`"
+        admin_message = f"{user_info}\n\n📄 Caption: {caption}\n\n💡 To reply, use:\n/reply {message_id} your_message"
         
-        bot.send_message(ADMIN_CHAT_ID, admin_message, parse_mode='Markdown')
+        bot.send_message(ADMIN_CHAT_ID, admin_message)
         bot.send_document(ADMIN_CHAT_ID, message.document.file_id)
+        logger.info(f"✅ Document forwarded to admin")
         
-        # Auto-reply to user
-        bot.reply_to(message, "✅ Document received! I will check it and reply when I come online.")
-        
-        logger.info(f"Forwarded document #{message_id} from user {user.id}")
+        bot.reply_to(message, "✅ Document received! I will check it and reply soon.")
         
     except Exception as e:
-        logger.error(f"Error forwarding document: {e}")
-        bot.reply_to(message, "❌ Failed to send document. Please try again later.")
+        logger.error(f"❌ Error forwarding document: {e}")
 
 # Admin reply command
 @bot.message_handler(commands=['reply'])
 def admin_reply(message):
+    logger.info(f"🔄 Admin reply attempt from user {message.from_user.id}")
+    
     # Check if user is admin
     if str(message.from_user.id) != ADMIN_CHAT_ID:
-        bot.reply_to(message, "❌ Access denied.")
+        bot.reply_to(message, "❌ Access denied. Admin only.")
         return
     
     try:
         # Parse command: /reply MESSAGE_ID Your reply text
         parts = message.text.split(' ', 2)
         if len(parts) < 3:
-            bot.reply_to(message, "❌ Usage: `/reply MESSAGE_ID Your message here`", parse_mode='Markdown')
+            bot.reply_to(message, "❌ Usage: /reply MESSAGE_ID Your message here\nExample: /reply 123 Hello! How can I help?")
             return
         
         original_message_id = int(parts[1])
         reply_text = parts[2]
         
+        logger.info(f"🔍 Looking for message ID: {original_message_id}")
+        logger.info(f"📝 Stored messages: {list(user_messages.keys())}")
+        
         # Get user info from stored messages
         if original_message_id not in user_messages:
-            bot.reply_to(message, "❌ Message ID not found. It might be too old.")
+            bot.reply_to(message, f"❌ Message ID {original_message_id} not found. Available IDs: {list(user_messages.keys())[-5:]}")  # Show last 5
             return
         
         user_info = user_messages[original_message_id]
         user_id = user_info['user_id']
         user_name = user_info['user_name']
         
+        logger.info(f"📤 Sending reply to user {user_id} ({user_name})")
+        
         # Send reply to user
-        bot.send_message(user_id, f"💌 Reply from admin:\n\n{reply_text}")
-        
-        # Confirm to admin
-        bot.reply_to(message, f"✅ Reply sent to {user_name} (ID: {user_id})")
-        
-        logger.info(f"Admin replied to user {user_id}")
+        try:
+            bot.send_message(user_id, f"💌 Reply from admin:\n\n{reply_text}")
+            logger.info(f"✅ Reply sent to user {user_id}")
+            
+            # Confirm to admin
+            bot.reply_to(message, f"✅ Reply sent to {user_name} (ID: {user_id})")
+            
+        except Exception as e:
+            error_msg = f"❌ Failed to send to user: {str(e)}"
+            bot.reply_to(message, error_msg)
+            logger.error(error_msg)
         
     except ValueError:
         bot.reply_to(message, "❌ Invalid message ID. Must be a number.")
     except Exception as e:
-        bot.reply_to(message, f"❌ Error sending reply: {str(e)}")
-        logger.error(f"Admin reply error: {e}")
+        error_msg = f"❌ Unexpected error: {str(e)}"
+        bot.reply_to(message, error_msg)
+        logger.error(error_msg)
 
 # Admin help command
-@bot.message_handler(commands=['admin'])
+@bot.message_handler(commands=['admin', 'help'])
 def admin_help(message):
     if str(message.from_user.id) != ADMIN_CHAT_ID:
-        bot.reply_to(message, "❌ Access denied.")
         return
     
     help_text = """
-🤖 *Admin Commands:*
+🤖 Admin Commands:
 
-📩 */reply MESSAGE_ID Your message* 
-- Reply to a user's message
-- Example: `/reply 123 Hello, I received your message`
+/reply MESSAGE_ID Your message here
+- Reply to any user message
 
-👥 */users*
-- Show recent users (to be implemented)
+Example:
+/reply 123 Hello! I can help you with that.
 
-📊 */stats*
-- Show bot statistics (to be implemented)
+Recent message IDs: """ + str(list(user_messages.keys())[-5:]) + """
 
-💡 *How to reply:*
-1. When a user messages, you'll get a message with a number like `Message #123`
-2. Use `/reply 123 Your message` to reply to that user
-3. The user will receive your message directly
+Bot is working! Check logs for details.
 """
-    bot.reply_to(message, help_text, parse_mode='Markdown')
+    bot.reply_to(message, help_text)
+
+# Test command to check if bot is working
+@bot.message_handler(commands=['test'])
+def test_command(message):
+    if str(message.from_user.id) != ADMIN_CHAT_ID:
+        return
+        
+    bot.reply_to(message, f"🤖 Bot is working!\nAdmin ID: {ADMIN_CHAT_ID}\nRecent messages: {list(user_messages.keys())[-5:]}")
+    logger.info("Test command executed")
 
 # Run bot polling
 def run_bot():
-    logger.info("🚀 Starting Telegram bot...")
+    logger.info("🚀 Starting Telegram bot polling...")
     
     if not BOT_TOKEN:
         logger.error("❌ BOT_TOKEN not found")
@@ -230,39 +244,62 @@ def run_bot():
         return
     
     try:
-        logger.info("✅ Bot configured successfully")
-        logger.info("🔄 Starting polling...")
+        # Test bot connection
+        bot_info = bot.get_me()
+        logger.info(f"✅ Bot connected: @{bot_info.username}")
         
         # Send startup message to admin
-        bot.send_message(ADMIN_CHAT_ID, "🤖 Bot started successfully!\nUse /admin for commands.")
+        bot.send_message(ADMIN_CHAT_ID, f"🤖 Bot started successfully!\nBot: @{bot_info.username}\nUse /admin for commands")
+        logger.info("✅ Startup message sent to admin")
         
-        bot.infinity_polling(timeout=60, long_polling_timeout=60)
+        # Start polling
+        bot.infinity_polling(timeout=60, long_polling_timeout=60, logger_level=logging.INFO)
         
     except Exception as e:
         logger.error(f"❌ Bot polling error: {e}")
         import time
         time.sleep(10)
-        run_bot()  # Restart
+        logger.info("🔄 Restarting bot...")
+        run_bot()
 
 # Start bot in a thread
 def start_bot():
-    bot_thread = Thread(target=run_bot, daemon=True)
-    bot_thread.start()
-    logger.info("✅ Bot thread started")
+    try:
+        bot_thread = Thread(target=run_bot, daemon=True)
+        bot_thread.start()
+        logger.info("✅ Bot thread started successfully")
+    except Exception as e:
+        logger.error(f"❌ Failed to start bot thread: {e}")
 
 # Main function
 def main():
-    if not BOT_TOKEN or not ADMIN_CHAT_ID:
-        logger.error("❌ Missing environment variables")
+    logger.info("🎯 Starting application...")
+    
+    # Validate environment variables
+    if not BOT_TOKEN:
+        logger.error("❌ BOT_TOKEN environment variable is not set")
         return
     
-    logger.info("🎯 Starting application...")
+    if not ADMIN_CHAT_ID:
+        logger.error("❌ ADMIN_CHAT_ID environment variable is not set")
+        return
+    
+    logger.info(f"🔑 Bot Token: {BOT_TOKEN[:10]}...")
+    logger.info(f"👤 Admin ID: {ADMIN_CHAT_ID}")
+    
+    # Start the bot
     start_bot()
     
+    # Start Flask app
     port = int(os.environ.get('PORT', 5000))
     logger.info(f"🌐 Starting Flask app on port {port}")
     
-    app.run(host='0.0.0.0', port=port, debug=False, use_reloader=False)
+    app.run(
+        host='0.0.0.0',
+        port=port,
+        debug=False,
+        use_reloader=False
+    )
 
 if __name__ == '__main__':
     main()
