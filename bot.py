@@ -25,6 +25,8 @@ app = Flask(__name__)
 
 # Store user data for replies
 user_messages = {}
+# Track if bot is already running
+bot_running = False
 
 @app.route('/')
 def home():
@@ -69,8 +71,8 @@ This bot is not automated it is manually operated by me so I will reply you when
 # Handle all user messages
 @bot.message_handler(func=lambda message: True, content_types=['text', 'photo', 'document'])
 def handle_all_messages(message):
-    # Ignore commands
-    if message.text and message.text.startswith('/'):
+    # Ignore commands from users (only process admin commands separately)
+    if message.text and message.text.startswith('/') and str(message.from_user.id) != ADMIN_CHAT_ID:
         return
         
     user = message.from_user
@@ -85,7 +87,11 @@ def handle_all_messages(message):
     
     logger.info(f"📨 Processing message #{message_id} from user {user.id}")
     
-    # Forward based on content type
+    # If message is from admin and is a command, handle separately
+    if str(message.from_user.id) == ADMIN_CHAT_ID and message.text and message.text.startswith('/'):
+        return  # Let the command handlers deal with it
+    
+    # Forward user messages to admin
     if message.text:
         forward_text_message(message, message_id)
     elif message.photo:
@@ -108,10 +114,6 @@ def forward_text_message(message, message_id):
         
     except Exception as e:
         logger.error(f"❌ Error forwarding text: {e}")
-        try:
-            bot.reply_to(message, "❌ Failed to send message. Please try again later.")
-        except:
-            pass
 
 def forward_photo_message(message, message_id):
     user = message.from_user
@@ -161,18 +163,18 @@ def admin_reply(message):
         # Parse command: /reply MESSAGE_ID Your reply text
         parts = message.text.split(' ', 2)
         if len(parts) < 3:
-            bot.reply_to(message, "❌ Usage: /reply MESSAGE_ID Your message here\nExample: /reply 123 Hello! How can I help?")
+            bot.reply_to(message, "❌ Usage: /reply MESSAGE_ID Your message here\nExample: /reply 320 Hello! How can I help?")
             return
         
         original_message_id = int(parts[1])
         reply_text = parts[2]
         
         logger.info(f"🔍 Looking for message ID: {original_message_id}")
-        logger.info(f"📝 Stored messages: {list(user_messages.keys())}")
         
         # Get user info from stored messages
         if original_message_id not in user_messages:
-            bot.reply_to(message, f"❌ Message ID {original_message_id} not found. Available IDs: {list(user_messages.keys())[-5:]}")  # Show last 5
+            recent_ids = list(user_messages.keys())[-5:] if user_messages else "No recent messages"
+            bot.reply_to(message, f"❌ Message ID {original_message_id} not found. Recent IDs: {recent_ids}")
             return
         
         user_info = user_messages[original_message_id]
@@ -183,7 +185,7 @@ def admin_reply(message):
         
         # Send reply to user
         try:
-            bot.send_message(user_id, f"💌 Reply from admin:\n\n{reply_text}")
+            bot.send_message(user_id, f"💌 Reply from support:\n\n{reply_text}")
             logger.info(f"✅ Reply sent to user {user_id}")
             
             # Confirm to admin
@@ -207,18 +209,20 @@ def admin_help(message):
     if str(message.from_user.id) != ADMIN_CHAT_ID:
         return
     
-    help_text = """
-🤖 Admin Commands:
+    recent_ids = list(user_messages.keys())[-5:] if user_messages else "No recent messages"
+    
+    help_text = f"""
+🤖 *Admin Commands:*
 
 /reply MESSAGE_ID Your message here
 - Reply to any user message
 
-Example:
-/reply 123 Hello! I can help you with that.
+*Example:*
+/reply 320 Hello! I can help you with that.
 
-Recent message IDs: """ + str(list(user_messages.keys())[-5:]) + """
+*Recent message IDs:* {recent_ids}
 
-Bot is working! Check logs for details.
+*Bot Status:* ✅ Running
 """
     bot.reply_to(message, help_text)
 
@@ -228,11 +232,19 @@ def test_command(message):
     if str(message.from_user.id) != ADMIN_CHAT_ID:
         return
         
-    bot.reply_to(message, f"🤖 Bot is working!\nAdmin ID: {ADMIN_CHAT_ID}\nRecent messages: {list(user_messages.keys())[-5:]}")
+    recent_ids = list(user_messages.keys())[-5:] if user_messages else "No recent messages"
+    bot.reply_to(message, f"🤖 Bot is working!\nAdmin ID: {ADMIN_CHAT_ID}\nRecent messages: {recent_ids}")
     logger.info("Test command executed")
 
-# Run bot polling
+# Run bot polling with single instance check
 def run_bot():
+    global bot_running
+    
+    if bot_running:
+        logger.info("⚠️ Bot instance already running, skipping...")
+        return
+        
+    bot_running = True
     logger.info("🚀 Starting Telegram bot polling...")
     
     if not BOT_TOKEN:
@@ -252,13 +264,15 @@ def run_bot():
         bot.send_message(ADMIN_CHAT_ID, f"🤖 Bot started successfully!\nBot: @{bot_info.username}\nUse /admin for commands")
         logger.info("✅ Startup message sent to admin")
         
-        # Start polling
+        # Start polling with error handling
+        logger.info("🔄 Starting polling...")
         bot.infinity_polling(timeout=60, long_polling_timeout=60, logger_level=logging.INFO)
         
     except Exception as e:
         logger.error(f"❌ Bot polling error: {e}")
+        bot_running = False
         import time
-        time.sleep(10)
+        time.sleep(30)  # Wait longer before restart
         logger.info("🔄 Restarting bot...")
         run_bot()
 
@@ -287,7 +301,7 @@ def main():
     logger.info(f"🔑 Bot Token: {BOT_TOKEN[:10]}...")
     logger.info(f"👤 Admin ID: {ADMIN_CHAT_ID}")
     
-    # Start the bot
+    # Start the bot (only one instance)
     start_bot()
     
     # Start Flask app
